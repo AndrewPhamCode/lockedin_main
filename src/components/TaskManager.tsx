@@ -1,3 +1,4 @@
+// src/components/TaskManager.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -9,30 +10,29 @@ import { Badge } from "./ui/badge";
 import { CheckCircle2, Circle, Plus, History, Trash2, Settings, RotateCcw } from "lucide-react";
 import { AnalogClock } from "./AnalogClock";
 import { CircularProgress } from "./CircularProgress";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { ScrollArea } from "./ui/scroll-area";
 import Logo from "./Logo";
 import { DailyStreak } from "./DailyStreak";
+import { api } from "@/lib/api";
 
-interface Task {
-  id: number;
+type BackendTask = {
+  _id: string;
+  userId: string;
   title: string;
   completed: boolean;
-}
+  createdAt?: string;
+  updatedAt?: string;
+};
 
 interface CompletedTask {
-  id: number;
+  id: string;          // keep as string for consistency
   title: string;
   completedDate: string;
 }
 
 interface TaskManagerProps {
+  userId: string;      // ⬅️ NEW (backend linkage)
   userName: string;
   onOpenProfile: () => void;
   totalSeconds: number;
@@ -47,7 +47,8 @@ interface TaskManagerProps {
   preEmergencyInitialSeconds: number;
 }
 
-export default function TaskManager({ 
+export default function TaskManager({
+  userId,
   userName,
   onOpenProfile,
   totalSeconds,
@@ -62,16 +63,16 @@ export default function TaskManager({
   preEmergencyInitialSeconds
 }: TaskManagerProps) {
   const [isLoaded, setIsLoaded] = useState(false);
+
+  // UI toggles
   const [isAllTasksOpen, setIsAllTasksOpen] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>([
-    { id: 1, title: "Add tasks you need to complete", completed: false },
-    { id: 2, title: "Set a timer to lock in and concentrate", completed: false },
-    { id: 3, title: "Complete each task in the time assigned", completed: false },
-    { id: 4, title: "After each task is complete, you can unlock your phone!", completed: false },
-  ]);
+
+  // ⬇️ tasks now come from backend but still cached locally
+  const [tasks, setTasks] = useState<BackendTask[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [previousTasks, setPreviousTasks] = useState<CompletedTask[]>([]);
-  
+  const [err, setErr] = useState<string>("");
+
   // Motivational messages that rotate
   const motivationalMessages = [
     "Lock in twin!",
@@ -81,39 +82,28 @@ export default function TaskManager({
   ];
   const [messageIndex, setMessageIndex] = useState(0);
 
-  // Load tasks from localStorage on mount
+  // Load from localStorage + then fetch from backend
   useEffect(() => {
-    const savedTasks = localStorage.getItem("lockedInTasks");
     const savedCompletedTasks = localStorage.getItem("lockedInCompletedTasks");
-    
-    if (savedTasks) {
-      try {
-        const parsed = JSON.parse(savedTasks);
-        setTasks(parsed);
-      } catch (e) {
-        console.error("Failed to parse saved tasks", e);
-      }
-    }
-    
     if (savedCompletedTasks) {
       try {
-        const parsed = JSON.parse(savedCompletedTasks);
-        setPreviousTasks(parsed);
+        setPreviousTasks(JSON.parse(savedCompletedTasks));
       } catch (e) {
         console.error("Failed to parse saved completed tasks", e);
       }
     }
-    
     setIsLoaded(true);
   }, []);
 
-  // Save tasks to localStorage whenever they change
+  // Fetch tasks for this user (backend)
   useEffect(() => {
-    if (!isLoaded) return;
-    localStorage.setItem("lockedInTasks", JSON.stringify(tasks));
-  }, [tasks, isLoaded]);
+    if (!userId) return;
+    api.listTasks(userId)
+      .then((list) => setTasks(list))
+      .catch((e) => setErr(e.message));
+  }, [userId]);
 
-  // Save completed tasks to localStorage whenever they change
+  // Persist completed tasks locally (for the history dialog)
   useEffect(() => {
     if (!isLoaded) return;
     localStorage.setItem("lockedInCompletedTasks", JSON.stringify(previousTasks));
@@ -131,77 +121,68 @@ export default function TaskManager({
   const totalCount = tasks.length;
   const progressPercentage = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
-  const handleToggleTask = (taskId: number) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((task) => {
-        if (task.id === taskId) {
-          const newCompleted = !task.completed;
-          
-          // If task is being completed, add to previous tasks
-          if (newCompleted) {
-            const currentDate = new Date().toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            setPreviousTasks((prev) => [
-              {
-                id: Date.now(),
-                title: task.title,
-                completedDate: currentDate,
-              },
-              ...prev,
-            ]);
-          } else {
-            // If uncompleting, remove from previous tasks
-            setPreviousTasks((prev) =>
-              prev.filter((pt) => pt.title !== task.title)
-            );
-          }
-          
-          return { ...task, completed: newCompleted };
-        }
-        return task;
-      })
-    );
-  };
+  async function handleToggleTask(taskId: string) {
+    try {
+      const found = tasks.find((t) => t._id === taskId);
+      if (!found) return;
+      const updated = await api.updateTask(taskId, { completed: !found.completed });
+      setTasks((prev) => prev.map((t) => (t._id === taskId ? updated : t)));
 
-  const handleAddTask = () => {
-    if (!newTaskTitle.trim()) {
-      return;
+      // History tracking for completed tasks
+      if (!found.completed) {
+        const currentDate = new Date().toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+        setPreviousTasks((prev) => [
+          { id: String(Date.now()), title: found.title, completedDate: currentDate },
+          ...prev,
+        ]);
+      } else {
+        setPreviousTasks((prev) => prev.filter((pt) => pt.title !== found.title));
+      }
+    } catch (e: any) {
+      setErr(e.message);
     }
+  }
 
-    const newTask: Task = {
-      id: Date.now(),
-      title: newTaskTitle.trim(),
-      completed: false,
-    };
-
-    setTasks((prev) => [...prev, newTask]);
-    setNewTaskTitle("");
-  };
-
-  const handleDeleteTask = (taskId: number) => {
-    const task = tasks.find((t) => t.id === taskId);
-    if (task?.completed) {
-      // Remove from previous tasks if it was completed
-      setPreviousTasks((prev) => prev.filter((pt) => pt.title !== task.title));
+  async function handleAddTask() {
+    const title = newTaskTitle.trim();
+    if (!title) return;
+    if (!userId) return alert("Please log in first.");
+    try {
+      const created = await api.createTask({ userId, title });
+      setTasks((prev) => [created, ...prev]);
+      setNewTaskTitle("");
+    } catch (e: any) {
+      setErr(e.message);
     }
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
-  };
+  }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleAddTask();
+  async function handleDeleteTask(taskId: string) {
+    try {
+      const task = tasks.find((t) => t._id === taskId);
+      if (task?.completed) {
+        setPreviousTasks((prev) => prev.filter((pt) => pt.title !== task.title));
+      }
+      await api.deleteTask(taskId);
+      setTasks((prev) => prev.filter((t) => t._id !== taskId));
+    } catch (e: any) {
+      setErr(e.message);
     }
-  };
+  }
 
-  const handleRestartTimer = () => {
+  function handleKeyPress(e: React.KeyboardEvent) {
+    if (e.key === "Enter") handleAddTask();
+  }
+
+  function handleRestartTimer() {
     setTotalSeconds(preEmergencySeconds);
     setInitialSeconds(preEmergencyInitialSeconds);
     setIsTimerRunning(true);
     setEmergencyUnlockUsed(false);
-  };
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-neutral-50 to-neutral-100 px-24 py-6">
@@ -240,7 +221,7 @@ export default function TaskManager({
             {/* Timer Section */}
             <div className="flex flex-col items-center border-r border-neutral-200 pr-8">
               <h2 className="text-neutral-900 text-2xl mb-6">Focus Timer</h2>
-              <AnalogClock 
+              <AnalogClock
                 totalSeconds={totalSeconds}
                 setTotalSeconds={setTotalSeconds}
                 isRunning={isTimerRunning}
@@ -257,7 +238,7 @@ export default function TaskManager({
                 value={progressPercentage}
                 completedCount={completedCount}
                 totalCount={totalCount}
-                tasks={tasks}
+                tasks={tasks.map(t => ({ id: t._id, title: t.title, completed: t.completed }))}
               />
             </div>
           </div>
@@ -276,11 +257,7 @@ export default function TaskManager({
                   <p className="text-sm text-neutral-600">Restart the timer to continue your focus session</p>
                 </div>
               </div>
-              <Button
-                onClick={handleRestartTimer}
-                style={{ backgroundColor: '#6b1a1a' }}
-                className="gap-2"
-              >
+              <Button onClick={handleRestartTimer} style={{ backgroundColor: '#6b1a1a' }} className="gap-2">
                 <RotateCcw className="w-4 h-4" />
                 Restart Timer
               </Button>
@@ -306,7 +283,7 @@ export default function TaskManager({
               ) : (
                 tasks.map((task) => (
                   <div
-                    key={task.id}
+                    key={task._id}
                     className={`flex items-center gap-5 p-6 rounded-lg border transition-colors ${
                       task.completed
                         ? "bg-neutral-50 border-neutral-200"
@@ -314,39 +291,30 @@ export default function TaskManager({
                     }`}
                   >
                     <button
-                      onClick={() => handleToggleTask(task.id)}
+                      onClick={() => handleToggleTask(task._id)}
                       className="focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-full"
                       style={{ focusRingColor: "#6b1a1a" }}
                     >
                       {task.completed ? (
-                        <CheckCircle2
-                          className="w-7 h-7 cursor-pointer hover:opacity-80 transition-opacity"
-                          style={{ color: "#6b1a1a" }}
-                        />
+                        <CheckCircle2 className="w-7 h-7 cursor-pointer hover:opacity-80 transition-opacity" style={{ color: "#6b1a1a" }} />
                       ) : (
                         <Circle className="w-7 h-7 text-neutral-300 cursor-pointer hover:text-neutral-400 transition-colors" />
                       )}
                     </button>
                     <div className="flex-1">
-                      <p
-                        className={`text-base ${
-                          task.completed
-                            ? "text-neutral-500 line-through"
-                            : "text-neutral-900"
-                        }`}
-                      >
+                      <p className={`text-base ${task.completed ? "text-neutral-500 line-through" : "text-neutral-900"}`}>
                         {task.title}
                       </p>
                     </div>
                     <Checkbox
                       checked={task.completed}
-                      onCheckedChange={() => handleToggleTask(task.id)}
+                      onCheckedChange={() => handleToggleTask(task._id)}
                       className="w-6 h-6"
                     />
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDeleteTask(task.id)}
+                      onClick={() => handleDeleteTask(task._id)}
                       className="text-neutral-400 hover:text-red-600"
                       disabled={isTimerRunning}
                     >
@@ -367,14 +335,10 @@ export default function TaskManager({
               className="flex-1 text-base"
               value={newTaskTitle}
               onChange={(e) => setNewTaskTitle(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
               disabled={isTimerRunning}
             />
-            <Button
-              className="gap-2"
-              onClick={handleAddTask}
-              disabled={isTimerRunning}
-            >
+            <Button className="gap-2" onClick={handleAddTask} disabled={isTimerRunning}>
               <Plus className="w-4 h-4" />
               Add Task
             </Button>
@@ -400,33 +364,19 @@ export default function TaskManager({
               <>
                 <div className="space-y-3">
                   {previousTasks.slice(0, 5).map((task) => (
-                    <div
-                      key={task.id}
-                      className="flex items-center gap-4 p-4 rounded-lg bg-neutral-50 border border-neutral-200"
-                    >
-                      <CheckCircle2
-                        className="w-6 h-6"
-                        style={{ color: "#6b1a1a" }}
-                      />
+                    <div key={task.id} className="flex items-center gap-4 p-4 rounded-lg bg-neutral-50 border border-neutral-200">
+                      <CheckCircle2 className="w-6 h-6" style={{ color: "#6b1a1a" }} />
                       <div className="flex-1">
-                        <p className="text-base text-neutral-500 line-through">
-                          {task.title}
-                        </p>
+                        <p className="text-base text-neutral-500 line-through">{task.title}</p>
                       </div>
-                      <span className="text-sm text-neutral-400">
-                        {task.completedDate}
-                      </span>
+                      <span className="text-sm text-neutral-400">{task.completedDate}</span>
                     </div>
                   ))}
                 </div>
 
                 {previousTasks.length > 5 && (
                   <div className="pt-2">
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => setIsAllTasksOpen(true)}
-                    >
+                    <Button variant="outline" className="w-full" onClick={() => setIsAllTasksOpen(true)}>
                       See all tasks
                     </Button>
                   </div>
@@ -435,7 +385,6 @@ export default function TaskManager({
             )}
           </div>
         </Card>
-
       </div>
 
       {/* All Tasks Dialog */}
@@ -443,30 +392,18 @@ export default function TaskManager({
         <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-6">
           <DialogHeader className="flex-shrink-0 pb-4">
             <DialogTitle className="text-2xl">All Completed Tasks</DialogTitle>
-            <DialogDescription>
-              View all {previousTasks.length} previously completed tasks
-            </DialogDescription>
+            <DialogDescription>View all {previousTasks.length} previously completed tasks</DialogDescription>
           </DialogHeader>
           <div className="flex-1 min-h-0">
             <ScrollArea className="h-full">
               <div className="space-y-3 pr-4">
                 {previousTasks.map((task) => (
-                  <div
-                    key={task.id}
-                    className="flex items-center gap-4 p-4 rounded-lg bg-neutral-50 border border-neutral-200"
-                  >
-                    <CheckCircle2
-                      className="w-6 h-6 flex-shrink-0"
-                      style={{ color: "#6b1a1a" }}
-                    />
+                  <div key={task.id} className="flex items-center gap-4 p-4 rounded-lg bg-neutral-50 border border-neutral-200">
+                    <CheckCircle2 className="w-6 h-6 flex-shrink-0" style={{ color: "#6b1a1a" }} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-base text-neutral-500 line-through">
-                        {task.title}
-                      </p>
+                      <p className="text-base text-neutral-500 line-through">{task.title}</p>
                     </div>
-                    <span className="text-sm text-neutral-400 flex-shrink-0">
-                      {task.completedDate}
-                    </span>
+                    <span className="text-sm text-neutral-400 flex-shrink-0">{task.completedDate}</span>
                   </div>
                 ))}
               </div>
