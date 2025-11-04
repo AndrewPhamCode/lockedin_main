@@ -120,6 +120,11 @@ export default function App() {
 
 
   const handleLogout = () => {
+    // stop timer before clearing everything
+    setIsTimerRunning(false);
+    setTotalSeconds(30 * 60);
+    setInitialSeconds(30 * 60);
+    
     setUserId("");
     setUserName("");
     setUserEmail("");

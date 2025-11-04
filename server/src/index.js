@@ -8,6 +8,8 @@ import mongoose from "mongoose";
 import healthRouter from "./routes/health.js";
 import usersRouter from "./routes/users.js";
 import tasksRouter from "./routes/tasks.js";
+import userRoutes from "./routes/users.js";
+
 
 const app = express();
 
@@ -26,6 +28,7 @@ app.use(cookieParser());
 app.use("/api/health", healthRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/tasks", tasksRouter);
+app.use("/api/users", userRoutes);
 
 // Start server after DB connects
 const PORT = process.env.PORT || 4000;
@@ -44,3 +47,6 @@ mongoose
     console.error("❌ Mongo connect error:", err.message);
     process.exit(1);
   });
+
+
+

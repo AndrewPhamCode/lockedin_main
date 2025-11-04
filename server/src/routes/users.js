@@ -108,4 +108,25 @@ r.get("/:id", async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/users/:email
+ * Permanently deletes a user by email
+ */
+r.delete("/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const deletedUser = await User.findOneAndDelete({
+      email: String(email).toLowerCase().trim(),
+    });
+
+    if (!deletedUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({ message: "User deleted successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default r;
