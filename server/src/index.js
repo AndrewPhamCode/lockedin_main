@@ -33,6 +33,11 @@ app.use("/api/users", userRoutes);
 // Start server after DB connects
 const PORT = process.env.PORT || 4000;
 
+app.get("/", (req, res) => {
+  res.send("Hello from Express!");
+}
+);
+
 mongoose
   .connect(process.env.MONGO_URI, {
     // you can add options here if needed
