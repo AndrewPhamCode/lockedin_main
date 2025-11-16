@@ -214,7 +214,7 @@ export default function TaskManager({
   allTasksComplete={completedCount > 0 && completedCount === totalCount}
 />
 
-              />
+              
             </div>
 
             {/* PROGRESS RING */}
