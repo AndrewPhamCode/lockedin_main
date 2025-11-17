@@ -7,13 +7,10 @@ import { Checkbox } from "./ui/checkbox";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
-import { CheckCircle2, Circle, Plus, History, Trash2, Settings, RotateCcw } from "lucide-react";
+import { CheckCircle2, Circle, Plus, Trash2, Settings } from "lucide-react";
 import { AnalogClock } from "./AnalogClock";
 import { CircularProgress } from "./CircularProgress";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
-import { ScrollArea } from "./ui/scroll-area";
 import Logo from "./Logo";
-import { DailyStreak } from "./DailyStreak";
 import { api } from "@/lib/api";
 
 const ESP_IP = "http://172.20.10.8";
@@ -66,11 +63,17 @@ export default function TaskManager({
 }: TaskManagerProps) {
 
   const [isLoaded, setIsLoaded] = useState(false);
-  const [isAllTasksOpen, setIsAllTasksOpen] = useState(false);
   const [tasks, setTasks] = useState<BackendTask[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [previousTasks, setPreviousTasks] = useState<CompletedTask[]>([]);
   const [err, setErr] = useState<string>("");
+
+  // 🆕 30-second cooldown timestamp
+  const [lastCompletedAt, setLastCompletedAt] = useState<number | null>(null);
+
+  // 🆕 Cooldown logic
+  const cooldownActive =
+    lastCompletedAt !== null && Date.now() - lastCompletedAt < 30000;
 
   const motivationalMessages = [
     "Lock in twin!",
@@ -99,7 +102,7 @@ export default function TaskManager({
       .catch((e) => setErr(e.message));
   }, [userId]);
 
-  // Save completed tasks locally
+  // Save completed tasks
   useEffect(() => {
     if (!isLoaded) return;
     localStorage.setItem("lockedInCompletedTasks", JSON.stringify(previousTasks));
@@ -111,15 +114,17 @@ export default function TaskManager({
       setMessageIndex((prev) => (prev + 1) % motivationalMessages.length);
     }, 4000);
     return () => clearInterval(interval);
-  }, [motivationalMessages.length]);
+  }, []);
 
-  // 🚨 AUTO-STOP WHEN ALL TASKS COMPLETE
+  // 🚨 AUTO STOP WHEN ALL TASKS COMPLETE
   useEffect(() => {
     if (tasks.length === 0) return;
+
     const allDone = tasks.every((t) => t.completed);
 
     if (allDone && isTimerRunning) {
-      console.log("🎉 All tasks complete — requesting ESP32 STOP");
+      console.log("🎉 All tasks complete — stopping ESP32");
+
       window.dispatchEvent(new CustomEvent("LOCKEDIN_AUTOSTOP"));
       setIsTimerRunning(false);
       setTotalSeconds(0);
@@ -128,28 +133,44 @@ export default function TaskManager({
 
   const completedCount = tasks.filter((t) => t.completed).length;
   const totalCount = tasks.length;
-  const progressPercentage = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+  
+  const progressPercentage =
+    totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
+  // 🆕 Handle task toggle with cooldown
   async function handleToggleTask(taskId: string) {
+    const task = tasks.find((t) => t._id === taskId);
+    if (!task) return;
+
+    // ❌ Prevent completing another task during cooldown
+    if (!task.completed && cooldownActive) {
+      alert("⏳ You must wait 30 seconds before completing another task.");
+      return;
+    }
+
     try {
-      const found = tasks.find((t) => t._id === taskId);
-      if (!found) return;
-      const updated = await api.updateTask(taskId, { completed: !found.completed });
+      const updated = await api.updateTask(taskId, { completed: !task.completed });
       setTasks((prev) => prev.map((t) => (t._id === taskId ? updated : t)));
 
-      if (!found.completed) {
+      if (!task.completed) {
+        // 🆕 Start cooldown timer
+        setLastCompletedAt(Date.now());
+
         const currentDate = new Date().toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
         });
+
         setPreviousTasks((prev) => [
-          { id: String(Date.now()), title: found.title, completedDate: currentDate },
+          { id: String(Date.now()), title: task.title, completedDate: currentDate },
           ...prev,
         ]);
       } else {
-        setPreviousTasks((prev) => prev.filter((pt) => pt.title !== found.title));
+        // Remove from completed history if unchecked
+        setPreviousTasks((prev) => prev.filter((pt) => pt.title !== task.title));
       }
+
     } catch (e: any) {
       setErr(e.message);
     }
@@ -158,6 +179,7 @@ export default function TaskManager({
   async function handleAddTask() {
     const title = newTaskTitle.trim();
     if (!title || !userId) return;
+
     try {
       const created = await api.createTask({ userId, title });
       setTasks((prev) => [created, ...prev]);
@@ -175,7 +197,7 @@ export default function TaskManager({
       }
       await api.deleteTask(taskId);
       setTasks((prev) => prev.filter((t) => t._id !== taskId));
-    } catch (e: any) {}
+    } catch (e) {}
   }
 
   function handleRestartTimer() {
@@ -192,29 +214,32 @@ export default function TaskManager({
         {/* HEADER */}
         <div className="relative flex items-center justify-center">
           <Logo />
-          <Button variant="ghost" size="icon" className="w-10 h-10 absolute right-0" onClick={onOpenProfile}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="w-10 h-10 absolute right-0"
+            onClick={onOpenProfile}
+          >
             <Settings className="w-5 h-5" />
           </Button>
         </div>
 
-        {/* TIMER & CLOCK */}
+        {/* TIMER & PROGRESS */}
         <Card className="p-8 bg-white shadow-sm">
           <div className="grid grid-cols-2 gap-8">
+
+            {/* TIMER */}
             <div className="flex flex-col items-center border-r border-neutral-200 pr-8">
               <h2 className="text-neutral-900 text-2xl mb-6">Focus Timer</h2>
 
-              {/* HERE: AnalogClock receives the auto-stop trigger */}
               <AnalogClock
-  totalSeconds={totalSeconds}
-  setTotalSeconds={setTotalSeconds}
-  isRunning={isTimerRunning}
-  setIsRunning={setIsTimerRunning}
-  initialSeconds={initialSeconds}
-  setInitialSeconds={setInitialSeconds}
-  allTasksComplete={completedCount > 0 && completedCount === totalCount}
-/>
-
-              
+                totalSeconds={totalSeconds}
+                setTotalSeconds={setTotalSeconds}
+                isRunning={isTimerRunning}
+                setIsRunning={setIsTimerRunning}
+                initialSeconds={initialSeconds}
+                setInitialSeconds={setInitialSeconds}
+              />
             </div>
 
             {/* PROGRESS RING */}
@@ -224,7 +249,11 @@ export default function TaskManager({
                 value={progressPercentage}
                 completedCount={completedCount}
                 totalCount={totalCount}
-                tasks={tasks.map(t => ({ id: t._id, title: t.title, completed: t.completed }))}
+                tasks={tasks.map(t => ({
+                  id: t._id,
+                  title: t.title,
+                  completed: t.completed
+                }))}
               />
             </div>
           </div>
@@ -236,8 +265,15 @@ export default function TaskManager({
 
             <div className="flex items-center justify-between">
               <h2 className="text-neutral-900 text-2xl">Tasks</h2>
+
+              {cooldownActive && (
+                <span className="text-red-500 text-sm">
+                  ⏳ Cooldown: {Math.ceil((30000 - (Date.now() - lastCompletedAt!)) / 1000)}s
+                </span>
+              )}
+
               <Badge variant="secondary" className="text-neutral-600">
-                {totalCount} {totalCount === 1 ? "task" : "tasks"}
+                {totalCount} task{totalCount !== 1 && "s"}
               </Badge>
             </div>
 
@@ -251,11 +287,16 @@ export default function TaskManager({
                   <div
                     key={task._id}
                     className={`flex items-center gap-5 p-6 rounded-lg border transition-colors ${
-                      task.completed ? "bg-neutral-50 border-neutral-200"
-                                      : "bg-white border-neutral-200 hover:border-neutral-300"
+                      task.completed
+                        ? "bg-neutral-50 border-neutral-200"
+                        : "bg-white border-neutral-200 hover:border-neutral-300"
                     }`}
                   >
-                    <button onClick={() => handleToggleTask(task._id)}>
+                    {/* CHECKBOX BUTTON */}
+                    <button
+                      onClick={() => handleToggleTask(task._id)}
+                      disabled={cooldownActive}
+                    >
                       {task.completed ? (
                         <CheckCircle2 className="w-7 h-7" style={{ color: "#6b1a1a" }} />
                       ) : (
@@ -263,13 +304,29 @@ export default function TaskManager({
                       )}
                     </button>
 
-                    <p className={`flex-1 text-base ${task.completed ? "line-through text-neutral-500" : "text-neutral-900"}`}>
+                    {/* TITLE */}
+                    <p
+                      className={`flex-1 text-base ${
+                        task.completed
+                          ? "line-through text-neutral-500"
+                          : "text-neutral-900"
+                      }`}
+                    >
                       {task.title}
                     </p>
 
-                    <Checkbox checked={task.completed} onCheckedChange={() => handleToggleTask(task._id)} />
+                    {/* SHADCN CHECKBOX */}
+                    <Checkbox
+                      checked={task.completed}
+                      disabled={cooldownActive}
+                      onCheckedChange={() => handleToggleTask(task._id)}
+                    />
 
-                    <Button variant="ghost" size="icon" onClick={() => handleDeleteTask(task._id)}
+                    {/* DELETE BUTTON */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDeleteTask(task._id)}
                       className="text-neutral-400 hover:text-red-600"
                       disabled={isTimerRunning}
                     >

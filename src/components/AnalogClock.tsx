@@ -314,7 +314,7 @@ export function AnalogClock({
     className="gap-2 border-green-600 text-green-700"
     onClick={resetTimer}
   >
-    🔓 Unlocked
+    Reset Timer
   </Button>
 )}
 
