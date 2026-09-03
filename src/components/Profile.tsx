@@ -62,10 +62,24 @@ export default function Profile({
   const [enteredPassword, setEnteredPassword] = useState("");
   const [emergencyError, setEmergencyError] = useState("");
 
-  const handleDeleteProfile = () => {
+ const handleDeleteProfile = async () => {
+  try {
+    const response = await fetch(`/api/users/${userEmail}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to delete profile");
+    }
+
+    alert("Your profile has been deleted successfully.");
     setIsDeleteDialogOpen(false);
     onLogout();
-  };
+  } catch (error) {
+    console.error("Error deleting profile:", error);
+    alert("There was a problem deleting your profile. Please try again.");
+  }
+};
 
   const handleLogout = () => {
     onLogout();
