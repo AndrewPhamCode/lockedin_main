@@ -207,10 +207,18 @@ This was built as a demo. Before using it for anything real:
 
 ## Team
 
+- Alan Tran
 - Andrew Pham
+- Annie Zhang
+- Camryn Calacsan
+- Emily Kai
+- Eric Jiang
 - Jimbo Cai
 - Justine Le
 - Marcus Mendoza
+- Nguyen Truong
+- Shail Bardolia
+- Shivam Sharma
 
 ## Credits
 
